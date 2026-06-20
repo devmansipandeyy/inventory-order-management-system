@@ -1,6 +1,10 @@
 from functools import lru_cache
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_LIBPQ_ONLY_PARAMS = {"sslmode", "channel_binding", "ssl"}
+_SSL_MODES = {"require", "verify-ca", "verify-full", "prefer", "allow"}
 
 
 class Settings(BaseSettings):
@@ -20,13 +24,32 @@ class Settings(BaseSettings):
     seed_on_startup: bool = True
 
     @property
-    def async_database_url(self) -> str:
+    def _normalized_url(self) -> str:
         url = self.database_url
         if url.startswith("postgres://"):
             return url.replace("postgres://", "postgresql+asyncpg://", 1)
         if url.startswith("postgresql://"):
             return url.replace("postgresql://", "postgresql+asyncpg://", 1)
         return url
+
+    @property
+    def async_database_url(self) -> str:
+        url = self._normalized_url
+        if "+asyncpg" not in url:
+            return url
+        parts = urlsplit(url)
+        kept = [(k, v) for k, v in parse_qsl(parts.query) if k.lower() not in _LIBPQ_ONLY_PARAMS]
+        return urlunsplit(parts._replace(query=urlencode(kept)))
+
+    @property
+    def db_connect_args(self) -> dict:
+        url = self._normalized_url
+        if "+asyncpg" not in url:
+            return {}
+        params = {k.lower(): v.lower() for k, v in parse_qsl(urlsplit(url).query)}
+        if params.get("sslmode") in _SSL_MODES or params.get("ssl") in {"true", "require"}:
+            return {"ssl": True}
+        return {}
 
     @property
     def ai_enabled(self) -> bool:
