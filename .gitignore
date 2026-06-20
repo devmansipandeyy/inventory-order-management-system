@@ -1,0 +1,32 @@
+# Secrets
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.db
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.local
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.gstack/
+
+# Internal planning artifacts — not for the public submission repo
+.claude/
+PLAN.md
+TODOS.md
