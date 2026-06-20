@@ -1,46 +1,57 @@
 # Deployment guide
 
-Three deliverables to produce: a Docker Hub backend image, a hosted backend API URL,
-and a hosted frontend URL. Order matters — backend first, then frontend (it needs the
-backend URL baked in).
+Live stack: **backend on Northflank** (free tier, always-on — no idle sleep),
+**Postgres on Neon** (free), **frontend on Vercel** (free), with **CI/CD** on every push
+to `main`. Deploy order: database first, then backend, then frontend (it needs the backend URL).
 
-## 1. Backend image → Docker Hub
+## 1. Database → Neon (free Postgres)
 
+Create a project at https://neon.tech → copy the **connection string** (Connect button); it
+looks like `postgresql://user:pass@ep-xxx.ap-southeast-1.aws.neon.tech/db?sslmode=require`.
+It becomes the backend's `DATABASE_URL`. The backend strips libpq-only params (`sslmode`,
+`channel_binding`) and negotiates SSL via asyncpg, so paste it as-is.
+
+## 2. Backend → Northflank (free, always-on)
+
+Northflank's free Developer Sandbox runs containers **always-on** (no spin-down), builds the
+`backend/Dockerfile` straight from GitHub, and **auto-redeploys on every push** to `main`.
+
+**CLI path:**
 ```bash
-export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
-docker login                                   # your Docker Hub username + password/token
-docker build -t <DOCKERHUB_USER>/inventory-backend:latest ./backend
-docker push <DOCKERHUB_USER>/inventory-backend:latest
+npm i -g @northflank/cli
+northflank login                      # opens a browser
 ```
-Image link: `https://hub.docker.com/r/<DOCKERHUB_USER>/inventory-backend`
+Then create a **combined service** (build + deploy) — repo
+`devmansipandeyy/inventory-order-management-system`, branch `main`, build type **Dockerfile**,
+dockerfile path `backend/Dockerfile`, build context `backend`, port **8000**, health `/health`.
 
-## 2. Backend API → Render (free, uses render.yaml)
+**Dashboard path:** New → Service → **Combined service** → select the repo + `main` branch →
+Build options: **Dockerfile** (path `backend/Dockerfile`, context `backend`) → port `8000`.
 
-1. Render Dashboard → **New → Blueprint** → connect the GitHub repo
-   `devmansipandeyy/inventory-order-management-system`.
-2. Render reads `render.yaml`: it creates a free **Postgres** + the **backend** Docker service.
-3. Set the one secret it asks for: **OPENAI_API_KEY** (`gpt-4o`). `DATABASE_URL` and
-   `JWT_SECRET` are wired automatically.
-4. Deploy. The backend listens on Render's `$PORT`, seeds Postgres on first boot, and
-   exposes `/health` and `/docs`.
+**Environment variables** (Service → Environment):
+- `DATABASE_URL` = the Neon string from step 1
+- `JWT_SECRET` = a long random string (`openssl rand -hex 32`)
+- `OPENAI_API_KEY` = your rotated key (optional — omit and AI features stay off, rest works)
+- `OPENAI_MODEL` = `gpt-4o`, `CORS_ORIGINS` = `*`, `SEED_ON_STARTUP` = `true`
 
-Backend API URL: `https://inventory-backend-XXXX.onrender.com`
-(Railway/Fly work too — any Docker host; the app reads `DATABASE_URL` + `PORT`.)
+Backend URL: `https://<service>--<project>.code.run` (`/docs` for Swagger, `/health` for liveness).
 
 ## 3. Frontend → Vercel (free)
 
 1. Vercel → **Add New → Project** → import the same repo.
 2. **Root Directory: `frontend`** (important). Framework auto-detects as Vite; `vercel.json`
-   handles the SPA routing.
-3. Add an environment variable **`VITE_API_BASE`** = the Render backend URL from step 2
-   (e.g. `https://inventory-backend-XXXX.onrender.com`).
-4. Deploy.
+   handles SPA routing.
+3. Add env var **`VITE_API_BASE`** = the Northflank backend URL from step 2.
+4. Deploy. Frontend URL: `https://<project>.vercel.app`.
 
-Frontend URL: `https://<project>.vercel.app`
+CORS is open (`CORS_ORIGINS=*`), so Vercel → Northflank works out of the box.
 
-CORS is already open (`CORS_ORIGINS=*`), so the Vercel frontend can call the Render backend
-out of the box. (Netlify works identically: base dir `frontend`, build `npm run build`,
-publish `dist`, same env var.)
+## 4. CI/CD
+
+- **Backend** — Northflank's Git integration is the pipeline: linking the repo builds and
+  redeploys on every push to `main`. No tokens or workflow files needed.
+- **Frontend** — Vercel's Git integration does the same: production on push to `main`,
+  preview deploys on PRs.
 
 ## Demo logins
 `admin@ethara.ai / admin123` (admin) · `staff@ethara.ai / staff123` (staff)
