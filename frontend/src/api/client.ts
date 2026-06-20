@@ -1,6 +1,22 @@
-import axios, { AxiosError } from "axios";
+import axios, { AxiosError, type InternalAxiosRequestConfig } from "axios";
 import { API_BASE } from "../lib/config";
 import { clearTokens, getToken } from "../lib/auth";
+
+const MAX_RETRIES = 2;
+const IDEMPOTENT_METHODS = new Set(["get", "head", "options"]);
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+
+type RetryConfig = InternalAxiosRequestConfig & { _retry?: number };
+
+function isReplayable(error: AxiosError): boolean {
+  if (error.code === "ERR_CANCELED") return false;
+  const method = (error.config?.method ?? "get").toLowerCase();
+  const url = error.config?.url ?? "";
+  const safe = IDEMPOTENT_METHODS.has(method) || url.includes("/auth/");
+  if (!safe) return false;
+  if (!error.response) return true;
+  return RETRYABLE_STATUS.has(error.response.status);
+}
 
 export const UNAUTHORIZED_EVENT = "inv:unauthorized";
 
@@ -20,7 +36,15 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (res) => res,
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
+    const config = error.config as RetryConfig | undefined;
+    if (config && isReplayable(error)) {
+      config._retry = (config._retry ?? 0) + 1;
+      if (config._retry <= MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, 300 * config._retry!));
+        return api(config);
+      }
+    }
     if (error.response?.status === 401) {
       const onLogin = window.location.pathname.startsWith("/login");
       if (!onLogin) {
